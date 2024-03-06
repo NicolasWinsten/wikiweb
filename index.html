@@ -17,13 +17,11 @@
       font-family: sans-serif;
       box-shadow: 0 30px 90px -20px rgba(0,0,0,0.3), 0 0 1px 1px rgba(0,0,0,0.05);
       border-radius: 2px;
-      /* max-height: 250px; */
       max-width: 500px;
       font-size: 14px;
     }
 
     #preview-popup p {
-      /* mask-image: linear-gradient(180deg, #000 65%, transparent); */
       padding: 5px;
       line-height: 1.4;
       margin-block-start: 0;
@@ -84,7 +82,7 @@
     <div id="options-list"></div>
   </div>
 
-  <p class="scene-nav-info" style="top:0px">Right-click to view the categories a page belongs to, Left-click to view the members of a category</p>
+  <p class="scene-nav-info" style="top:0px;color:black;">Right-click nodes to view the categories a page belongs to, Left-click to view the members of a category</p>
 
   <script src="https://unpkg.com/3d-force-graph"></script>
   <script type="importmap">{ "imports": { "three": "https://unpkg.com/three/build/three.module.js" }}</script>
@@ -96,6 +94,7 @@
       Object.entries(params).forEach(([key, val]) => api.searchParams.append(key, val))
       api.searchParams.append("origin", "*")
       api.searchParams.append("format", "json")
+      api.searchParams.append("redirects", "true")
       const jsonObj = await fetch(api).then(response => response.json())
       if (jsonObj.error) throw new Error(JSON.stringify(jsonObj.error))
       return jsonObj
@@ -103,8 +102,8 @@
 
     function notBoring(title_) {
       const title = title_.toLowerCase()
-      const words = new Set(title.split(/[: ]/))
-      const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists"])
+      const words = new Set(title.split(/[: \(\)]/))
+      const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists", "disambiguation"])
       const blacklisted = words.intersection(blacklist).size != 0
 
       const boringGroupings = ["year", "location", "country"]
@@ -174,6 +173,7 @@
     // simple object to set a timeout for an action and also interrupt it if necessary
     class timer {
       #handle
+      #running = false
 
       constructor(action, delay) {
         this.action = action
@@ -182,11 +182,20 @@
 
       launch(...params) {
         clearTimeout(this.#handle)
-        this.#handle = setTimeout(() => this.action(...params), this.delay)
+        this.#handle = setTimeout(() => {
+          this.#running = false
+          this.action(...params)
+        }, this.delay)
+        this.#running = true
       }
       
       interrupt() {
         clearTimeout(this.#handle)
+        this.#running = false
+      }
+
+      get running() {
+        return this.#running
       }
     }
 
@@ -244,13 +253,17 @@
         const option = document.createElement("button")
         option.innerText = title
         option.classList.add("suggestion")
-        option.onclick = () => {
+
+        // resolve the title of the suggestion first,
+        // then add it to the graph
+        option.onclick = () => fetchPreview(title).then(({title}) => {
           suggestionsList.innerHTML = ''
           searchBox.value = ''
           clearData()
           newNode(title)
           setTimeout(() => graph.zoomToFit(1000, 300), 300)
-        }
+        })
+
         suggestionsList.appendChild(option)
       })
     }
@@ -302,6 +315,7 @@
     function clearData() {
       nodeSet.clear()
       graph.graphData({nodes : [], links : []})
+      nodeInserter.interrupt()
     }
 
     /**
@@ -315,28 +329,31 @@
       })
     }
 
-    function delay(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms))
-    }
+    // nodes should be inserted one after another instead of all at once
+    const nodeInserter = new timer(function(nodes) {
+      const n = nodes.pop()
+      if (n) {
+        newNode(n).then(() => this.launch(nodes))
+      }
+    }, 100)
 
+    // add in the categories to the graph that the node belongs to
     function climbPage(node) {
-      Array.from(node.parents)
-        .filter(parent => !nodeSet.has(parent))
-        .reduce((insertions, parent) =>
-          insertions.then(() => newNode(parent), delay(300)),
-          delay(0)
-        )
+      if (nodeInserter.running) return
+
+      nodeInserter.launch(
+        Array.from(node.parents).filter(parent => !nodeSet.has(parent))
+      )
     }
 
+    // add in this node's category members into the graph
     async function spinPage(node) {
       if (isArticle(node)) return
+      if (nodeInserter.running) return
 
-      (await fetchMembers(node.title))
-        .filter(child => !nodeSet.has(child))
-        .reduce((insertions, parent) =>
-          insertions.then(() => newNode(parent), delay(300)),
-          delay(0)
-        )
+      nodeInserter.launch(
+        (await fetchMembers(node.title)).filter(child => !nodeSet.has(child))
+      )
     }
 
     const graphDiv = document.getElementById("graph")
@@ -355,8 +372,12 @@
         return sprite
       })
       .onNodeRightClick(climbPage)
-      .onNodeClick(spinPage)
+      .onNodeClick(node => {
+        if (isArticle(node)) window.open(`https://en.wikipedia.org/wiki/${node.title}`, "_blank")
+        else spinPage(node)
+      })
       .onNodeHover(node => {
+        // hovering over a node for a while should bring up a preview of the page
         showPreviewTimer.interrupt()
         if (!node) {
           hidePreviewTimer.launch()
@@ -375,8 +396,6 @@
       graph.width(window.innerWidth)
       graph.height(window.innerHeight)
     }
-
-    
 
   </script>
 </body>
