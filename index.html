@@ -279,9 +279,10 @@
         popupTimeout = setTimeout(() => displayPreview(node.title, mousePos), 1000)
       })
     
-    newNode("Spider")
+    // initial node
+    newNode("Spider web")
 
-    graph.d3Force('charge').strength(-120)
+    graph.d3Force('charge').strength(-200)
 
     window.onresize = () => {
       graph.width(window.innerWidth)
