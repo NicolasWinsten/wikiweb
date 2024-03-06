@@ -1,0 +1,295 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Document</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      position: relative;
+    }
+
+    #preview-popup {
+      position: absolute;
+      background-color: white;
+      font-family: sans-serif;
+      box-shadow: 0 30px 90px -20px rgba(0,0,0,0.3), 0 0 1px 1px rgba(0,0,0,0.05);
+      border-radius: 2px;
+      /* max-height: 250px; */
+      max-width: 500px;
+      font-size: 14px;
+    }
+
+    #preview-popup p {
+      /* mask-image: linear-gradient(180deg, #000 65%, transparent); */
+      padding: 5px;
+      line-height: 1.4;
+      margin-block-start: 0;
+      margin-block-end: 0;
+    }
+
+    #preview-popup img {
+      max-width: 294px;
+      max-height: 250px;
+      float: right;
+      margin-left: 5px;
+    }
+
+    a {
+      all: unset;
+      cursor: pointer;
+    }
+
+    #search {
+      position: absolute;
+      left: 0px;
+      top: 0px;
+    }
+  </style>
+</head>
+<body>
+  <div id="graph"></div>
+
+  <a target="_blank" id="preview-popup" style="display: none;" onmouseleave="setTimeout(hide(this), 500)"></a>
+
+  <div id="search">
+    <input type="text" id="search-box" placeholder="type your wikipedia article" oninput="searchBox(this.value)">
+    <ul id="options-list"></ul>
+  </div>
+
+  <script>
+    function hide(e) {
+      e.style.display = 'none'
+    }
+
+    let searchTimeout = null
+
+    function searchBox(title) {
+      clearTimeout(searchTimeout)
+      // set timeout and search titles
+      // display titles below search box
+      // navigate to them with arrow keys and press enter to place node
+    }
+
+    document.getElementById("search-box").addEventListener("focusout", () => document.getElementById("search-box").value = '')
+
+  </script>
+
+  <script src="https://unpkg.com/3d-force-graph"></script>
+  <script type="importmap">{ "imports": { "three": "https://unpkg.com/three/build/three.module.js" }}</script>
+  <script type="module">
+    import SpriteText from "https://unpkg.com/three-spritetext/dist/three-spritetext.mjs"
+
+    async function wikipediaApi(params) {
+      const api = new URL("https://en.wikipedia.org/w/api.php")
+      Object.entries(params).forEach(([key, val]) => api.searchParams.append(key, val))
+      api.searchParams.append("origin", "*")
+      api.searchParams.append("format", "json")
+      const jsonObj = await fetch(api).then(response => response.json())
+      if (jsonObj.error) throw new Error(JSON.stringify(jsonObj.error))
+      return jsonObj
+    }
+
+    function notBoring(title_) {
+      const title = title_.toLowerCase()
+      const words = new Set(title.split(/[: ]/))
+      const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists"])
+      const blacklisted = words.intersection(blacklist).size != 0
+
+      const boringGroupings = ["year", "location", "country"]
+      const boringGroup = boringGroupings.some(g => title.match(` by ${g}`))
+
+      return !(blacklisted || boringGroup)
+    }
+
+    /**
+     * return a list of pages given a search title (searches by prefix)
+     */
+    async function searchTitles(searchTitle) {
+      const response = await wikipediaApi({
+        action  : "query",
+        list    : "prefixsearch",
+        pssearch: searchTitle
+      })
+      return response.query.prefixsearch
+        .map(page => page.title)
+        .filter(notBoring)
+    }
+
+
+    /**
+     * fetch the list of category pages associated with the given title
+     */
+    async function fetchCategories(title) {
+      console.log("fetching categories of", title)
+      const response = await wikipediaApi({
+        action  : "query",
+        prop    : "categories",
+        titles  : title,
+        cllimit : "max",
+        clshow  : "!hidden",
+      })
+      return Object.values(response.query.pages)[0].categories
+        .map(cat => cat.title)
+        .filter(notBoring)
+    }
+    
+    /**
+     * fetch the members of the given category title
+     */
+    async function fetchMembers(category) {
+      console.log("fetching members of", category)
+      const response = await wikipediaApi({
+        action  : "query",
+        list    : "categorymembers",
+        cmtitle : category,
+        cmlimit : "max",
+        cmnamespace  : "0|14",
+      })
+      return response.query.categorymembers
+        .map(page => page.title)
+        .filter(notBoring)
+    }
+
+    function fetchPreview(title) {
+      return fetch(new URL(`https://en.wikipedia.org/api/rest_v1/page/summary/${title}`))
+        .then(response => response.json())
+    }
+
+    function preview() {
+      return document.getElementById("preview-popup")
+    }
+
+    async function displayPreview(title, {x, y}) {
+      const response = await fetchPreview(title)
+      if (response.type == "no-extract") return // nothing to display
+
+      const popup = preview()
+      popup.innerHTML = ''
+      popup.style.display = ''
+      
+      if (response.thumbnail) {
+        const image = document.createElement("img")
+        image.src = response.thumbnail.source
+        popup.appendChild(image)
+      }
+      
+      popup.innerHTML += response["extract_html"]
+      popup.style.left = `${x}px`
+      popup.style.top = `${y}px`
+      popup.href = `https://en.wikipedia.org/wiki/${title}`
+    }
+
+    function label(node) {
+      return node.title.replace(/^Category:/, "")
+    }
+
+    function isArticle({title}) {
+      return !title.startsWith("Category:")
+    }
+
+    // track the titles currently existing in the graph for quick checking
+    const nodeSet = new Set()
+
+    /**
+     * insert a new node into the graph simulation.
+     * fetch any categories it belongs to, and check for any links to existing nodes
+     */
+    async function newNode(title) {
+      nodeSet.add(title)
+      // get all the categories this node belongs to and cross-reference it
+      // with the nodes already existing in the graph
+      const cats = new Set(await fetchCategories(title))
+      let node = {title : title, parents : cats}
+
+      const newParentLinks = Array.from(nodeSet.intersection(cats))
+        .filter(n => cats.has(n))
+        .map(parent => ({source : parent, target : title}))
+      
+      // check for any existing nodes that are a child of the new node
+      const newChildLinks = isArticle(node) ? [] : graph.graphData().nodes
+        .filter(({parents}) => parents.has(title))
+        .map(child => ({source : title, target : child.title}))
+      
+
+      addData([node], newParentLinks.concat(newChildLinks))
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms))
+    }
+
+    function addData(newNodes, newLinks) {
+      const {nodes, links} = graph.graphData()
+      graph.graphData({
+        nodes : [...nodes, ...newNodes],
+        links : [...links, ...newLinks]
+      })
+    }
+
+    function climbPage(node) {
+      Array.from(node.parents)
+        .filter(parent => !nodeSet.has(parent))
+        .reduce((insertions, parent) =>
+          insertions.then(() => newNode(parent), delay(300)),
+          delay(0)
+        )
+    }
+
+    async function spinPage(node) {
+      if (isArticle(node)) return
+
+      (await fetchMembers(node.title))
+        .filter(child => !nodeSet.has(child))
+        .reduce((insertions, parent) =>
+          insertions.then(() => newNode(parent), delay(300)),
+          delay(0)
+        )
+    }
+
+    const graphDiv = document.getElementById("graph")
+
+    let popupTimeout = null
+
+    const graph = ForceGraph3D()(graphDiv)
+      .backgroundColor('#ffffff')
+      .linkColor(() => '#000000')
+      .linkCurvature(0.1)
+      .nodeId("title")
+      .nodeThreeObject(node => {
+        const sprite = new SpriteText(label(node))
+        sprite.material.depthWrite = false
+        sprite.color = isArticle(node) ? '#36c' : '#000000'
+        sprite.textHeight = isArticle(node) ? 5 : 8
+        sprite.fontFace = isArticle(node) ? "sans-serif" : "Linux Libertine"
+        return sprite
+      })
+      .onNodeRightClick(climbPage)
+      .onNodeClick(spinPage)
+      .onNodeHover(node => {
+        clearTimeout(popupTimeout)
+        if (!node) {
+          setTimeout(() => hide(preview()), 500)
+          return
+        }
+        console.log(node)
+        const mousePos = graph.graph2ScreenCoords(node.x, node.y, node.z)
+        popupTimeout = setTimeout(() => displayPreview(node.title, mousePos), 1000)
+      })
+    
+    newNode("Spider")
+
+    graph.d3Force('charge').strength(-120)
+
+    window.onresize = () => {
+      graph.width(window.innerWidth)
+      graph.height(window.innerHeight)
+    }
+
+    
+
+  </script>
+</body>
+</html>
