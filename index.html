@@ -46,36 +46,45 @@
       position: absolute;
       left: 0px;
       top: 0px;
+      width: 200px;
+      font-family: sans-serif;
+      font-size: 14px;
+    }
+
+    #search-box, .suggestion {
+      all: unset;
+      width: 100%;
+      border-width: 1px;
+      border-radius: 2px;
+      border-color: slategray;
+      border-style: solid;
+      padding: 0.2em;
+    }
+
+    .suggestion {
+      width: 100%;
+      text-align: left;
+      text-decoration: underline;
+      cursor: pointer;
+    }
+
+    .suggestion:focus, .suggestion:hover {
+      background-color: #cddeff;
+      color: #36c;
     }
   </style>
 </head>
 <body>
   <div id="graph"></div>
 
-  <a target="_blank" id="preview-popup" style="display: none;" onmouseleave="setTimeout(hide(this), 500)"></a>
+  <a target="_blank" id="preview-popup" style="display: none;"></a>
 
   <div id="search">
-    <input type="text" id="search-box" placeholder="type your wikipedia article" oninput="searchBox(this.value)">
-    <ul id="options-list"></ul>
+    <input type="text" id="search-box" placeholder="type your wikipedia article">
+    <div id="options-list"></div>
   </div>
 
-  <script>
-    function hide(e) {
-      e.style.display = 'none'
-    }
-
-    let searchTimeout = null
-
-    function searchBox(title) {
-      clearTimeout(searchTimeout)
-      // set timeout and search titles
-      // display titles below search box
-      // navigate to them with arrow keys and press enter to place node
-    }
-
-    document.getElementById("search-box").addEventListener("focusout", () => document.getElementById("search-box").value = '')
-
-  </script>
+  <p class="scene-nav-info" style="top:0px">Right-click to view the categories a page belongs to, Left-click to view the members of a category</p>
 
   <script src="https://unpkg.com/3d-force-graph"></script>
   <script type="importmap">{ "imports": { "three": "https://unpkg.com/three/build/three.module.js" }}</script>
@@ -131,7 +140,7 @@
         cllimit : "max",
         clshow  : "!hidden",
       })
-      return Object.values(response.query.pages)[0].categories
+      return (Object.values(response.query.pages)[0].categories || [])
         .map(cat => cat.title)
         .filter(notBoring)
     }
@@ -148,7 +157,7 @@
         cmlimit : "max",
         cmnamespace  : "0|14",
       })
-      return response.query.categorymembers
+      return (response.query.categorymembers || [])
         .map(page => page.title)
         .filter(notBoring)
     }
@@ -158,30 +167,101 @@
         .then(response => response.json())
     }
 
-    function preview() {
-      return document.getElementById("preview-popup")
+    function hide(e) {
+      e.style.display = 'none'
     }
 
+    // simple object to set a timeout for an action and also interrupt it if necessary
+    class timer {
+      #handle
+
+      constructor(action, delay) {
+        this.action = action
+        this.delay = delay
+      }
+
+      launch(...params) {
+        clearTimeout(this.#handle)
+        this.#handle = setTimeout(() => this.action(...params), this.delay)
+      }
+      
+      interrupt() {
+        clearTimeout(this.#handle)
+      }
+    }
+
+    const preview = document.getElementById("preview-popup")
+    const showPreviewTimer = new timer(displayPreview, 1000)
+    const hidePreviewTimer = new timer(() => hide(preview), 300)
+
+    preview.onmouseleave = hidePreviewTimer.launch()
+    preview.onmouseenter = hidePreviewTimer.interrupt()
+
+    /**
+     * display a preview of the given page at some screen coords
+     */
     async function displayPreview(title, {x, y}) {
       const response = await fetchPreview(title)
       if (response.type == "no-extract") return // nothing to display
 
-      const popup = preview()
-      popup.innerHTML = ''
-      popup.style.display = ''
+      preview.innerHTML = ''
+      preview.style.display = ''
       
       if (response.thumbnail) {
         const image = document.createElement("img")
         image.src = response.thumbnail.source
-        popup.appendChild(image)
+        preview.appendChild(image)
       }
       
-      popup.innerHTML += response["extract_html"]
-      popup.style.left = `${x}px`
-      popup.style.top = `${y}px`
-      popup.href = `https://en.wikipedia.org/wiki/${title}`
+      preview.innerHTML += response["extract_html"]
+
+      // reset preview positions
+      preview.style.left = ''
+      preview.style.top = ''
+      preview.style.right = ''
+      preview.style.bottom = ''
+
+      // adjust preview placement so that it doesnt fall off screen
+      if (x > window.innerWidth / 2) preview.style.right = `${window.innerWidth - x}px`
+      else preview.style.left = `${x}px`
+
+      if (y > window.innerHeight / 2) preview.style.bottom = `${window.innerHeight - y}px`
+      else preview.style.top = `${y}px`
+
+      preview.href = `https://en.wikipedia.org/wiki/${title}`
     }
 
+    const searchBox = document.getElementById("search-box")
+    const suggestionsList = document.getElementById("options-list")
+
+    const suggestArticlesTimer = new timer(suggestArticles, 500)
+
+    // populate suggestions list based on the search box
+    async function suggestArticles() {
+      const results = await searchTitles(searchBox.value)
+      suggestionsList.innerHTML = ''
+      results.forEach(title => {
+        const option = document.createElement("button")
+        option.innerText = title
+        option.classList.add("suggestion")
+        option.onclick = () => {
+          suggestionsList.innerHTML = ''
+          searchBox.value = ''
+          clearData()
+          newNode(title)
+          setTimeout(() => graph.zoomToFit(1000, 300), 300)
+        }
+        suggestionsList.appendChild(option)
+      })
+    }
+
+    searchBox.oninput = () => {
+      suggestionsList.innerHTML = ''
+      suggestArticlesTimer.interrupt()
+      if (searchBox.value.length) suggestArticlesTimer.launch()
+    }
+
+    // produce the display label for a node
     function label(node) {
       return node.title.replace(/^Category:/, "")
     }
@@ -213,20 +293,30 @@
         .filter(({parents}) => parents.has(title))
         .map(child => ({source : title, target : child.title}))
       
-
       addData([node], newParentLinks.concat(newChildLinks))
     }
 
-    function delay(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms))
+    /**
+     * clear out the graph
+     */
+    function clearData() {
+      nodeSet.clear()
+      graph.graphData({nodes : [], links : []})
     }
 
+    /**
+     * add new nodes/links to the graph simulation
+     */
     function addData(newNodes, newLinks) {
       const {nodes, links} = graph.graphData()
       graph.graphData({
         nodes : [...nodes, ...newNodes],
         links : [...links, ...newLinks]
       })
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms))
     }
 
     function climbPage(node) {
@@ -251,8 +341,6 @@
 
     const graphDiv = document.getElementById("graph")
 
-    let popupTimeout = null
-
     const graph = ForceGraph3D()(graphDiv)
       .backgroundColor('#ffffff')
       .linkColor(() => '#000000')
@@ -262,21 +350,20 @@
         const sprite = new SpriteText(label(node))
         sprite.material.depthWrite = false
         sprite.color = isArticle(node) ? '#36c' : '#000000'
-        sprite.textHeight = isArticle(node) ? 5 : 8
+        sprite.textHeight = isArticle(node) ? 5 : 5
         sprite.fontFace = isArticle(node) ? "sans-serif" : "Linux Libertine"
         return sprite
       })
       .onNodeRightClick(climbPage)
       .onNodeClick(spinPage)
       .onNodeHover(node => {
-        clearTimeout(popupTimeout)
+        showPreviewTimer.interrupt()
         if (!node) {
-          setTimeout(() => hide(preview()), 500)
+          hidePreviewTimer.launch()
           return
         }
-        console.log(node)
         const mousePos = graph.graph2ScreenCoords(node.x, node.y, node.z)
-        popupTimeout = setTimeout(() => displayPreview(node.title, mousePos), 1000)
+        showPreviewTimer.launch(node.title, mousePos)
       })
     
     // initial node
