@@ -47,6 +47,7 @@
       width: 200px;
       font-family: sans-serif;
       font-size: 14px;
+      background-color: white;
     }
 
     #search-box, .suggestion {
@@ -57,6 +58,7 @@
       border-color: slategray;
       border-style: solid;
       padding: 0.2em;
+      background-color: white;
     }
 
     .suggestion {
@@ -243,12 +245,21 @@
     const searchBox = document.getElementById("search-box")
     const suggestionsList = document.getElementById("options-list")
 
+    function clearSuggestionsList() {
+      suggestionsList.innerHTML = ''
+    }
+
+    function resetSearchBox() {
+      clearSuggestionsList()
+      searchBox.value = ''
+    }
+
     const suggestArticlesTimer = new timer(suggestArticles, 500)
 
     // populate suggestions list based on the search box
     async function suggestArticles() {
       const results = await searchTitles(searchBox.value)
-      suggestionsList.innerHTML = ''
+      clearSuggestionsList()
       results.forEach(title => {
         const option = document.createElement("button")
         option.innerText = title
@@ -257,8 +268,7 @@
         // resolve the title of the suggestion first,
         // then add it to the graph
         option.onclick = () => fetchPreview(title).then(({title}) => {
-          suggestionsList.innerHTML = ''
-          searchBox.value = ''
+          resetSearchBox()
           clearData()
           newNode(title)
           setTimeout(() => graph.zoomToFit(1000, 300), 300)
@@ -269,7 +279,7 @@
     }
 
     searchBox.oninput = () => {
-      suggestionsList.innerHTML = ''
+      clearSuggestionsList()
       suggestArticlesTimer.interrupt()
       if (searchBox.value.length) suggestArticlesTimer.launch()
     }
@@ -335,7 +345,7 @@
       if (n) {
         newNode(n).then(() => this.launch(nodes))
       }
-    }, 100)
+    }, 10)
 
     // add in the categories to the graph that the node belongs to
     function climbPage(node) {
@@ -386,6 +396,7 @@
         const mousePos = graph.graph2ScreenCoords(node.x, node.y, node.z)
         showPreviewTimer.launch(node.title, mousePos)
       })
+      .onBackgroundClick(resetSearchBox)
     
     // initial node
     newNode("Spider web")
