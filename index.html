@@ -96,7 +96,7 @@
       Object.entries(params).forEach(([key, val]) => api.searchParams.append(key, val))
       api.searchParams.append("origin", "*")
       api.searchParams.append("format", "json")
-      api.searchParams.append("redirects", "true")
+      api.searchParams.append("redirects", "1")
       const jsonObj = await fetch(api).then(response => response.json())
       if (jsonObj.error) throw new Error(JSON.stringify(jsonObj.error))
       return jsonObj
@@ -301,7 +301,6 @@
      * fetch any categories it belongs to, and check for any links to existing nodes
      */
     async function newNode(title) {
-      nodeSet.add(title)
       // get all the categories this node belongs to and cross-reference it
       // with the nodes already existing in the graph
       const cats = await fetchCategories(title)
@@ -315,8 +314,18 @@
       const newChildLinks = isArticle(node) ? [] : graph.graphData().nodes
         .filter(({parents}) => parents.has(title))
         .map(child => ({source : title, target : child.title}))
+
+      // the node is not linked to the existing graph so ignore it
+      const loneNode = newParentLinks.length == 0 && newChildLinks.length == 0
+
+      const firstNode = nodeSet.size == 0
       
-      addData([node], newParentLinks.concat(newChildLinks))
+      // do not add lone nodes
+      // (sometimes redirects of titles are not resolved, so unresolved titles don't form links in the graph)
+      if (!loneNode || firstNode) {
+        nodeSet.add(title)
+        addData([node], newParentLinks.concat(newChildLinks))
+      }
     }
 
     /**
