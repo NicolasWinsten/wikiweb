@@ -102,9 +102,9 @@
 
     function notBoring(title_) {
       const title = title_.toLowerCase()
-      const words = new Set(title.split(/[: \(\)]/))
+      const words = title.split(/[: \(\)]/)
       const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists", "disambiguation"])
-      const blacklisted = words.intersection(blacklist).size != 0
+      const blacklisted = words.some(w => blacklist.has(w))
 
       const boringGroupings = ["year", "location", "country"]
       const boringGroup = boringGroupings.some(g => title.match(` by ${g}`))
@@ -294,11 +294,11 @@
       nodeSet.add(title)
       // get all the categories this node belongs to and cross-reference it
       // with the nodes already existing in the graph
-      const cats = new Set(await fetchCategories(title))
-      let node = {title : title, parents : cats}
+      const cats = await fetchCategories(title)
+      let node = {title : title, parents : new Set(cats)}
 
-      const newParentLinks = Array.from(nodeSet.intersection(cats))
-        .filter(n => cats.has(n))
+      const newParentLinks = cats
+        .filter(parent => nodeSet.has(parent))
         .map(parent => ({source : parent, target : title}))
       
       // check for any existing nodes that are a child of the new node
