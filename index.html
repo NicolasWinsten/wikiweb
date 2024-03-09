@@ -105,7 +105,7 @@
     function notBoring(title_) {
       const title = title_.toLowerCase()
       const words = title.split(/[: \(\)]/)
-      const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists", "disambiguation"])
+      const blacklist = new Set(["stubs", "redirects", "articles", "list", "lists", "disambiguation", "portal", "portals"])
       const blacklisted = words.some(w => blacklist.has(w))
 
       const boringGroupings = ["year", "location", "country"]
